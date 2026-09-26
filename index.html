@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Capital Allocation Network</title>
+<style>
+  :root { --bg:#111; --text:#ddd; --panel:rgba(20,20,20,0.9); --border:#fff;
+    padding-top: env(safe-area-inset-top,0px); padding-bottom: env(safe-area-inset-bottom,0px); box-sizing:border-box; }
+  html { scroll-padding-top: env(safe-area-inset-top,0px); }
+  html, body { height:100%; margin:0; background:var(--bg); font-family:-apple-system,sans-serif; overflow:hidden; }
+  svg { display:block; width:100%; height:100%; touch-action:none; }
+  text { fill:var(--text); font-size:11px; pointer-events:none; user-select:none; }
+  .node { stroke:var(--border); stroke-width:1px; cursor:grab; pointer-events:all; }
+  .node.candidate { stroke-dasharray:3,2; fill:none; stroke:#aaa; }
+  .node.unlabeled { stroke:#ff3b3b; animation: pulse 2.4s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity:0.35; } 50% { opacity:0.85; } }
+  text.unlabeled-mark { fill:#ff3b3b; font-size:10px; }
+  .node.latent-driver { fill:#2a0e33; stroke:#e066ff; stroke-width:2px; }
+  .link.latent-driver { stroke-dasharray:2,4; }
+  .node.latent-cluster { fill:none; stroke:#66d9ff; stroke-dasharray:6,3; }
+  .link.latent-cluster { stroke-dasharray:2,2; }
+  text.latent-driver-label { fill:#e066ff; font-size:10px; }
+  text.latent-cluster-label { fill:#66d9ff; font-size:10px; }
+  .link { stroke-opacity:0.55; }
+  .link.interconnect { stroke-opacity:0.8; }
+  .dim { opacity:0.07; }
+  #hud { position:fixed; top:calc(10px + env(safe-area-inset-top,0px)); left:10px; color:var(--text);
+    background:var(--panel); border:1px solid #444; border-radius:8px; padding:8px 12px; font-size:12px; max-width:270px; line-height:1.4; }
+  #tooltip { position:fixed; pointer-events:none; background:var(--panel); color:var(--text); border:1px solid #555;
+    border-radius:6px; padding:4px 8px; font-size:12px; display:none; z-index:10; max-width:220px; }
+</style>
+</head>
+<body>
+<div id="hud">
+  <div style="font-size:14px; font-weight:600; margin-bottom:6px; color:#fff;">Stranded Capital – couplings across sectors, geographies, and drivers</div>
+  <div style="margin-bottom:6px;">Drag nodes • Pinch/scroll to zoom • Tap a node to highlight its links</div>
+  <div id="legend"></div>
+</div>
+<div id="tooltip"></div>
+<svg></svg>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<script>
+const sectors = ["Energy","Transport","Industry","Buildings","Agriculture","Finance"];
+const regions = ["EU","US","China","India","Africa","LatAm"];
+const capitalTypes = ["Produced","Human","Natural","Financial","Institutional"];
+
+const driverInfo = {
+  "Policy":       { color:"#ff6b6b", width:5,   dash:null,  label:"Policy (strong)" },
+  "Tech":         { color:"#4ecdc4", width:5,   dash:null,  label:"Technology (strong)" },
+  "Physical":     { color:"#ffe66d", width:3,   dash:null,  label:"Physical (secondary)" },
+  "Litigation":   { color:"#c77dff", width:3,   dash:null,  label:"Litigation (secondary)" },
+  "Market":       { color:"#1a8fe3", width:1.5, dash:"4,3", label:"Market (derived, weak)" },
+  "Interconnect": { color:"#f2f2f2", width:2,   dash:"1,3", label:"Sector interconnection (width = coupling strength)" }
+};
+
+// Illustrative sector-to-sector coupling strengths (0-1), based on known
+// transition-risk entanglements (electrification, shared supply chains,
+// capital exposure). Fields: [sectorA, sectorB, strength, direction, mechanism]
+// direction "->" = causal, one-way; "<->" = symbiotic, two-way (Finance only).
+const sectorCoupling = [
+  ["Energy","Transport",0.90,"->","Falling renewable/battery costs and EV adoption raise electricity demand from transport, while stranding oil-linked transport assets."],
+  ["Energy","Industry",0.85,"->","Industrial electrification and rising carbon costs push heavy industry onto the grid, tying its exposure to power-sector transition risk."],
+  ["Energy","Buildings",0.80,"->","Electrified heating/cooling ties building energy costs and asset value directly to power-sector pricing and decarbonization pace."],
+  ["Finance","Energy",0.75,"<->","Capital funds energy assets; energy-sector performance and stranded-asset risk feed back into portfolio valuations and lending terms — a two-way loop."],
+  ["Industry","Transport",0.60,"->","Shared battery/steel/materials supply chains mean industrial capacity and cost constraints propagate directly into transport manufacturing."],
+  ["Finance","Industry",0.55,"<->","Capital allocation shapes industrial capacity; industrial write-downs and compliance costs flow back into financial exposure — mutual."],
+  ["Finance","Transport",0.50,"<->","Financing terms shape fleet/infrastructure investment; transport-asset stranding risk (ICE vehicles, fuel infrastructure) feeds back into lender exposure."],
+  ["Finance","Buildings",0.45,"<->","Mortgage/REIT capital shapes retrofit pace; climate-exposed or inefficient buildings feed back as impairment risk — mutual."],
+  ["Industry","Buildings",0.30,"->","Construction material costs and availability (steel, cement) set by industrial output directly affect building costs and specs."],
+  ["Transport","Buildings",0.25,"->","Transport infrastructure and accessibility shape building location value and urban development patterns."],
+  ["Finance","Agriculture",0.40,"<->","Agricultural credit and insurance flow from finance; crop/land value and climate losses feed back into lender risk — mutual."],
+  ["Agriculture","Energy",0.35,"->","Biomass/biofuel feedstock and land-use choices in agriculture directly supply bioenergy pathways."],
+  ["Agriculture","Industry",0.20,"->","Agricultural commodities are raw material inputs (food processing, textiles, chemicals) for industrial production."],
+  ["Agriculture","Buildings",0.20,"->","Timber and bio-based materials from agriculture/forestry feed into building material supply."],
+  ["Agriculture","Transport",0.15,"->","Perishable/seasonal agricultural output drives demand for cold-chain and logistics transport capacity."]
+];
+
+let nodes = [];
+sectors.forEach(sec=>{
+  nodes.push({ id:sec, type:"sector", r:25 });
+  regions.forEach(reg=>{
+    nodes.push({ id:`${sec}-${reg}`, type:"region", sector:sec, r:12 });
+    capitalTypes.forEach(ct=>{
+      nodes.push({ id:`${sec}-${reg}-${ct}`, type:"capital", sector:sec, region:reg, capital:ct, r:6 });
+    });
+  });
+});
+
+let links = [];
+sectors.forEach(sec=> regions.forEach((reg,i)=>
+  links.push({ source:sec, target:`${sec}-${reg}`, driver: i%2===0 ? "Physical" : "Litigation", value:5, direction:"->" })));
+sectors.forEach(sec=> regions.forEach(reg=> capitalTypes.forEach(ct=>
+  links.push({ source:`${sec}-${reg}`, target:`${sec}-${reg}-${ct}`, driver:"Market", value:2, direction:"->" }))));
+
+// Cross-sector interconnection edges — the direct answer to "how are
+// clusters interconnected", replacing the tautological single Global root.
+sectorCoupling.forEach(([a,b,s,dir,mech])=>
+  links.push({ source:a, target:b, driver:"Interconnect", value:s, strength:s, direction:dir, mechanism:mech }));
+
+// Candidate / "undiscovered" nodes: any coupling strong enough to matter
+// gets a ghost node. The strongest three get a named hypothesis; the rest
+// are structurally implied but not yet nameable, so they surface as bare
+// "?" nodes — hidden relationships the graph can point to without
+// pretending to know what they are.
+const CANDIDATE_THRESHOLD = 0.3;
+const sortedCoupling = [...sectorCoupling].sort((a,b)=>b[2]-a[2]);
+const namedPairs = new Set(sortedCoupling.slice(0,3).map(([a,b])=>`${a}|${b}`));
+const candidateLabels = {
+  "Energy|Transport": "? Electrification bridge",
+  "Energy|Industry": "? Industrial heat bridge",
+  "Energy|Buildings": "? Heating/cooling bridge"
+};
+sectorCoupling.filter(([,,s])=>s>=CANDIDATE_THRESHOLD).forEach(([a,b,s])=>{
+  const id = `candidate:${a}-${b}`;
+  const isNamed = namedPairs.has(`${a}|${b}`);
+  nodes.push({
+    id, type:"candidate", r: isNamed ? 14 : 9,
+    named: isNamed,
+    label: isNamed ? candidateLabels[`${a}|${b}`] : "?",
+    tooltip: isNamed ? candidateLabels[`${a}|${b}`] : `Unlabeled — implied by ${a}\u2194${b} coupling (${s.toFixed(2)})`
+  });
+  links.push({ source:a, target:id, driver:"Interconnect", value:s*0.6, strength:s*0.6, direction:"->" });
+  links.push({ source:b, target:id, driver:"Interconnect", value:s*0.6, strength:s*0.6, direction:"->" });
+});
+
+// --- Named latent drivers ---
+// These are common causes sitting BEHIND several edges/driver-types at once
+// (climate change feeds Physical + Litigation + Policy; PR feeds Market +
+// Policy; tech revolutions produce correlated bursts of Tech edges). They
+// are drawn as their own bipartite layer fanning into the sectors they
+// causally touch, rather than folded into the per-edge driver coloring.
+const latentDrivers = [
+  { id:"Observed Climate Change", targets:["Energy","Agriculture","Buildings","Transport"] },
+  { id:"Sustainability PR",       targets:["Finance","Buildings","Transport","Industry"] },
+  { id:"Tech Revolution",         targets:["Energy","Transport","Industry"] }
+];
+latentDrivers.forEach(ld=>{
+  nodes.push({ id: ld.id, type:"latentDriver", r:18, tooltip: `Latent driver — feeds: ${ld.targets.join(", ")}` });
+  ld.targets.forEach(t=>
+    links.push({ source: ld.id, target:t, driver:"LatentDriver", value:1, direction:"->" }));
+});
+
+// --- Unnamed latent clusters, found mathematically ---
+// Modularity-maximizing partition of the sector-coupling network (brute
+// force over all set partitions — only 6 sectors, so exhaustive is cheap).
+// Any community the algorithm finds with 2+ members is a mathematically
+// implied grouping, independent of your Energy/Transport/etc labels — it
+// gets a node even though nothing has named what binds that group yet.
+function setPartitions(arr){
+  if(arr.length===0) return [[]];
+  const [first,...rest] = arr;
+  const restParts = setPartitions(rest);
+  const out = [];
+  restParts.forEach(p=>{
+    out.push([[first], ...p]);
+    for(let i=0;i<p.length;i++){
+      const np = p.map(b=>b.slice());
+      np[i] = [first, ...np[i]];
+      out.push(np);
+    }
+  });
+  return out;
+}
+const idx = new Map(sectors.map((s,i)=>[s,i]));
+const A = Array.from({length:sectors.length}, ()=>new Array(sectors.length).fill(0));
+sectorCoupling.forEach(([a,b,s])=>{ A[idx.get(a)][idx.get(b)] = s; A[idx.get(b)][idx.get(a)] = s; });
+const k = A.map(row=>row.reduce((a,b)=>a+b,0));
+const twoM = k.reduce((a,b)=>a+b,0);
+function modularity(partition){
+  let Q = 0;
+  partition.forEach(block=>{
+    let internal=0, degSum=0;
+    block.forEach(sec=>{ degSum += k[idx.get(sec)]; });
+    block.forEach(a=> block.forEach(b=>{ internal += A[idx.get(a)][idx.get(b)]; }));
+    Q += internal/twoM - Math.pow(degSum/twoM, 2);
+  });
+  return Q;
+}
+const bestPartition = setPartitions(sectors)
+  .filter(p=> p.length>=2 && p.length<=sectors.length-1) // exclude the trivial "one giant cluster" and "all singletons"
+  .reduce((best,p)=>{
+    const q = modularity(p);
+    return (!best || q>best.q) ? { p, q } : best;
+  }, null).p;
+bestPartition.filter(block=>block.length>1).forEach((block,i)=>{
+  const id = `latentCluster:${i}`;
+  nodes.push({ id, type:"latentCluster", r:16, tooltip:`Unnamed latent cluster (modularity-derived) — members: ${block.join(", ")}` });
+  block.forEach(sec=> links.push({ source:id, target:sec, driver:"LatentCluster", value:1, direction:"->" }));
+});
+
+const svg = d3.select("svg");
+const width = window.innerWidth, height = window.innerHeight;
+const g = svg.append("g");
+svg.call(d3.zoom().scaleExtent([0.15,6]).on("zoom", e=>g.attr("transform", e.transform)));
+
+function linkColor(d){
+  if(d.driver==="LatentDriver") return "#e066ff";
+  if(d.driver==="LatentCluster") return "#66d9ff";
+  return driverInfo[d.driver].color;
+}
+const markerName = { "#ff6b6b":"red","#4ecdc4":"teal","#ffe66d":"yellow","#c77dff":"purple",
+  "#1a8fe3":"blue","#f2f2f2":"white","#e066ff":"magenta","#66d9ff":"cyan" };
+const defs = svg.append("defs");
+Object.entries(markerName).forEach(([color,name])=>{
+  defs.append("marker")
+    .attr("id",`arrow-${name}`).attr("viewBox","0 -5 10 10")
+    .attr("refX",8).attr("refY",0).attr("markerWidth",6).attr("markerHeight",6).attr("orient","auto")
+    .append("path").attr("d","M0,-5L10,0L0,5").attr("fill",color);
+});
+function markerUrl(d){ return `url(#arrow-${markerName[linkColor(d)]})`; }
+
+const link = g.selectAll("line").data(links).enter().append("line")
+  .attr("class", d=>{
+    if(d.driver==="Interconnect") return "link interconnect";
+    if(d.driver==="LatentDriver") return "link latent-driver";
+    if(d.driver==="LatentCluster") return "link latent-cluster";
+    return "link";
+  })
+  .attr("stroke", d=>linkColor(d))
+  .attr("stroke-width", d=> d.driver==="Interconnect" ? 1 + d.strength*6 : (d.driver==="LatentDriver"||d.driver==="LatentCluster" ? 1.5 : driverInfo[d.driver].width))
+  .attr("stroke-dasharray", d=> (d.driver==="LatentDriver"||d.driver==="LatentCluster") ? null : driverInfo[d.driver].dash)
+  .attr("marker-end", d=> markerUrl(d))
+  .attr("marker-start", d=> d.direction==="<->" ? markerUrl(d) : null);
+
+// Explains how a relationship works — causal (one-way) vs symbiotic (two-way) — for click/tap.
+function getExplanation(d){
+  const s = d.source.id || d.source, t = d.target.id || d.target;
+  if(d.driver==="Interconnect" && d.mechanism){
+    const cls = d.direction==="<->" ? "Symbiotic (two-way)" : "Causal (one-way)";
+    return `${s} \u2194 ${t} \u2014 ${cls}. ${d.mechanism}`;
+  }
+  if(d.driver==="Interconnect")
+    return `${s} \u2192 ${t} \u2014 Structural. Contributes to an implied cross-sector relationship not yet named in the taxonomy.`;
+  if(d.driver==="LatentDriver")
+    return `${s} \u2192 ${t} \u2014 Causal (latent). A common cause acting on this sector alongside others it also feeds.`;
+  if(d.driver==="LatentCluster")
+    return `${s} \u2192 ${t} \u2014 Structural (latent). Falls inside a modularity-derived latent grouping; no causal direction implied, just structural cohesion found mathematically.`;
+  if(d.driver==="Physical" || d.driver==="Litigation")
+    return `${s} \u2192 ${t} \u2014 Causal. ${d.driver} risk pathway propagating from the sector into this region's exposure.`;
+  if(d.driver==="Market")
+    return `${s} \u2192 ${t} \u2014 Causal (derived). Market repricing transmits risk into this capital layer \u2014 a weak, secondary driver, not a primary cause.`;
+  return `${s} \u2192 ${t}`;
+}
+
+// Invisible, wide hit-area line laid over each visible link so relationships
+// are actually tappable on mobile (the real lines are 1.5-5px wide).
+const linkHit = g.selectAll("line.link-hit").data(links).enter().append("line")
+  .attr("class","link-hit")
+  .attr("stroke","transparent")
+  .attr("stroke-width", 16)
+  .style("pointer-events","stroke")
+  .style("cursor","pointer")
+  .on("click",(event,d)=>{
+    event.stopPropagation();
+    const tt = document.getElementById("tooltip");
+    tt.style.maxWidth = "260px";
+    tt.textContent = getExplanation(d);
+    tt.style.display = "block";
+    tt.style.left = (event.clientX+12)+"px";
+    tt.style.top = (event.clientY+12)+"px";
+    highlightLink(d);
+  });
+
+function highlightLink(d){
+  const s = d.source.id||d.source, t = d.target.id||d.target;
+  const ids = new Set([s,t]);
+  node.classed("dim", n=>!ids.has(n.id));
+  link.classed("dim", l=>{ const ls=l.source.id||l.source, lt=l.target.id||l.target; return !(ls===s&&lt===t) && !(ls===t&&lt===s); });
+  label.classed("dim", n=>!ids.has(n.id));
+}
+
+const node = g.selectAll("circle").data(nodes).enter().append("circle")
+  .attr("class", d=>{
+    if(d.type==="candidate") return d.named ? "node candidate" : "node candidate unlabeled";
+    if(d.type==="latentDriver") return "node latent-driver";
+    if(d.type==="latentCluster") return "node latent-cluster";
+    return "node";
+  })
+  .attr("r", d=>d.r)
+  .attr("fill", d=>{
+    if(d.type==="candidate" || d.type==="latentCluster") return "none";
+    if(d.type==="latentDriver") return "#2a0e33";
+    if(d.type==="sector") return "#ff8c00";
+    if(d.type==="region") return "#4ecdc4";
+    return "#888";
+  })
+  .call(d3.drag()
+    .on("start",(event,d)=>{ if(!event.active) simulation.alphaTarget(0.3).restart(); d.fx=d.x; d.fy=d.y; })
+    .on("drag",(event,d)=>{ d.fx=event.x; d.fy=event.y; })
+    .on("end",(event,d)=>{ if(!event.active) simulation.alphaTarget(0); d.fx=null; d.fy=null; }))
+  .on("mouseenter touchstart",(event,d)=>{
+    const tt = document.getElementById("tooltip");
+    tt.style.display = "block";
+    tt.textContent = d.tooltip || (d.type==="candidate" ? d.tooltip : d.id);
+    tt.style.left = (event.clientX+12)+"px";
+    tt.style.top = (event.clientY+12)+"px";
+  })
+  .on("mouseleave", ()=> document.getElementById("tooltip").style.display="none")
+  .on("click",(event,d)=>{ event.stopPropagation(); highlight(d); });
+
+const label = g.selectAll("text").data(nodes).enter().append("text")
+  .attr("class", d=>{
+    if(d.type==="candidate" && !d.named) return "unlabeled-mark";
+    if(d.type==="latentDriver") return "latent-driver-label";
+    if(d.type==="latentCluster") return "latent-cluster-label";
+    return null;
+  })
+  .text(d=>{
+    if(d.type==="capital") return "";
+    if(d.type==="candidate") return d.named ? d.label : "?";
+    if(d.type==="latentCluster") return "L?";
+    return d.id;
+  });
+
+svg.on("click", ()=>clearHighlight());
+
+const legend = document.getElementById("legend");
+const note0=document.createElement("div");
+note0.style.cssText="margin-bottom:4px;";
+note0.textContent="Arrows show causal direction. Double-headed = Finance edges only (capital flows both ways); everything else is single-direction.";
+legend.appendChild(note0);
+Object.entries(driverInfo).forEach(([name,info])=>{
+  const row=document.createElement("div");
+  row.style.cssText="display:flex;align-items:center;gap:6px;margin:2px 0;";
+  const sw=document.createElement("span");
+  sw.style.cssText=`width:22px;height:0px;border-top:${info.width}px ${info.dash?"dashed":"solid"} ${info.color};`;
+  const t=document.createElement("span"); t.textContent=info.label;
+  row.appendChild(sw); row.appendChild(t); legend.appendChild(row);
+});
+const note=document.createElement("div");
+note.style.cssText="margin-top:4px;font-style:italic;color:#999;";
+note.textContent="Dashed circles = candidate bridge nodes. Named = strongest 3 couplings; red pulsing \"?\" = implied but not yet nameable (hover for coupling strength)";
+legend.appendChild(note);
+const note2=document.createElement("div");
+note2.style.cssText="margin-top:4px;color:#e066ff;";
+note2.textContent="Magenta = named latent drivers (climate change, sustainability PR, tech revolution) feeding several sectors at once";
+legend.appendChild(note2);
+const note3=document.createElement("div");
+note3.style.cssText="margin-top:2px;color:#66d9ff;";
+note3.textContent='Cyan "L?" = unnamed latent cluster from modularity optimization on the coupling network — a mathematically implied grouping, no name assigned yet';
+legend.appendChild(note3);
+
+function neighborsOf(d){
+  const ids=new Set([d.id]);
+  links.forEach(l=>{
+    const s=l.source.id||l.source, t=l.target.id||l.target;
+    if(s===d.id) ids.add(t);
+    if(t===d.id) ids.add(s);
+  });
+  return ids;
+}
+function highlight(d){
+  const ids=neighborsOf(d);
+  node.classed("dim", n=>!ids.has(n.id));
+  link.classed("dim", l=>{ const s=l.source.id||l.source, t=l.target.id||l.target; return !(ids.has(s)&&ids.has(t)); });
+  label.classed("dim", n=>!ids.has(n.id));
+}
+function clearHighlight(){
+  node.classed("dim",false); link.classed("dim",false); label.classed("dim",false);
+  document.getElementById("tooltip").style.display = "none";
+}
+
+const sectorMap = new Map();
+
+const simulation = d3.forceSimulation(nodes)
+  .force("link", d3.forceLink(links).id(d=>d.id)
+    .distance(d=>{
+      if(d.driver==="Interconnect") return 260 - d.strength*180; // stronger coupling -> shorter distance
+      return d.source.type==="sector" ? 90 : 70;
+    })
+    .strength(d=> d.driver==="Interconnect" ? 0.15 + d.strength*0.5 : 0.7))
+  .force("charge", d3.forceManyBody().strength(d=>{
+    if(d.type==="candidate") return -80;
+    if(d.type==="latentDriver" || d.type==="latentCluster") return -140;
+    return -220;
+  }))
+  .force("center", d3.forceCenter(width/2, height/2))
+  .force("cluster", alpha=>{
+    nodes.forEach(d=>{
+      if(d.type==="region" || d.type==="capital"){
+        const sec = sectorMap.get(d.sector);
+        if(sec){ d.vx -= (d.x-sec.x)*alpha*0.4; d.vy -= (d.y-sec.y)*alpha*0.4; }
+      }
+    });
+  })
+  .force("collision", d3.forceCollide().radius(d=>d.r+4))
+  .on("tick", ticked);
+
+sectors.forEach(sec=> sectorMap.set(sec, nodes.find(n=>n.id===sec)));
+
+function ticked(){
+  link.each(function(d){
+    const dx=d.target.x-d.source.x, dy=d.target.y-d.source.y;
+    const dist=Math.sqrt(dx*dx+dy*dy)||1;
+    const rs=(d.source.r||6)+2, rt=(d.target.r||6)+2;
+    d._x1 = d.source.x + dx/dist*rs;
+    d._y1 = d.source.y + dy/dist*rs;
+    d._x2 = d.target.x - dx/dist*rt;
+    d._y2 = d.target.y - dy/dist*rt;
+  });
+  link.attr("x1",d=>d._x1).attr("y1",d=>d._y1).attr("x2",d=>d._x2).attr("y2",d=>d._y2);
+  linkHit.attr("x1",d=>d.source.x).attr("y1",d=>d.source.y).attr("x2",d=>d.target.x).attr("y2",d=>d.target.y);
+  node.attr("cx",d=>d.x).attr("cy",d=>d.y);
+  label.attr("x",d=>d.x+d.r+3).attr("y",d=>d.y+4);
+}
+</script>
+</body>
+</html>
