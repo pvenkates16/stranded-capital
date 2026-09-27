@@ -66,6 +66,11 @@
   #helpPanel .swatchline { display:flex; align-items:center; gap:8px; margin:4px 0; }
   #helpPanel .swatch { width:24px; height:0; flex-shrink:0; }
   #helpPanel .dot { width:12px; height:12px; border-radius:50%; flex-shrink:0; }
+
+  #counterCorner { position:fixed; left:10px; bottom:calc(8px + env(safe-area-inset-bottom,0px)); z-index:15;
+    opacity:0.55; transition:opacity 0.2s; line-height:0; }
+  #counterCorner:hover, #counterCorner:active { opacity:1; }
+  #counterCorner img { height:14px; border-radius:3px; display:block; }
 </style>
 </head>
 <body>
@@ -73,8 +78,6 @@
 <div id="topbar">
   <div class="title">Stranded Capital – couplings across sectors, geographies, and drivers</div>
   <div class="btns">
-    <img id="hitBadge" alt="visit count" style="height:20px; border-radius:4px;"
-         src="https://komarev.com/ghpvc/?username=stranded-capital-network&label=Views&color=1a8fe3&style=flat">
     <button class="pill" id="legendToggle">Legend</button>
     <button class="pill" id="helpToggle">? Help</button>
   </div>
@@ -139,6 +142,12 @@
       <li><b>Dimmed elements</b> after a tap are everything <i>not</i> connected to what you selected — a quick way to trace one node or relationship's footprint through the whole graph.</li>
     </ul>
   </div>
+</div>
+
+<div id="counterCorner">
+  <a href="https://pvenkates16.goatcounter.com" target="_blank" rel="noopener">
+    <img id="hitBadge" alt="visit count" src="https://pvenkates16.goatcounter.com/counter/TOTAL.svg">
+  </a>
 </div>
 
 <svg></svg>
@@ -541,5 +550,7 @@ function ticked(){
   label.attr("x",d=>d.x+d.r+3).attr("y",d=>d.y+4);
 }
 </script>
+<script data-goatcounter="https://pvenkates16.goatcounter.com/count"
+        async src="https://gc.zgo.at/count.js"></script>
 </body>
 </html>
