@@ -3,9 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Capital Allocation Network</title>
+<title>Stranded Capital Network</title>
 <style>
-  :root { --bg:#111; --text:#ddd; --panel:rgba(20,20,20,0.9); --border:#fff;
+  :root { --bg:#111; --text:#ddd; --panel:rgba(20,20,20,0.94); --border:#fff;
     padding-top: env(safe-area-inset-top,0px); padding-bottom: env(safe-area-inset-bottom,0px); box-sizing:border-box; }
   html { scroll-padding-top: env(safe-area-inset-top,0px); }
   html, body { height:100%; margin:0; background:var(--bg); font-family:-apple-system,sans-serif; overflow:hidden; }
@@ -25,19 +25,120 @@
   .link { stroke-opacity:0.55; }
   .link.interconnect { stroke-opacity:0.8; }
   .dim { opacity:0.07; }
-  #hud { position:fixed; top:calc(10px + env(safe-area-inset-top,0px)); left:10px; color:var(--text);
-    background:var(--panel); border:1px solid #444; border-radius:8px; padding:8px 12px; font-size:12px; max-width:270px; line-height:1.4; }
-  #tooltip { position:fixed; pointer-events:none; background:var(--panel); color:var(--text); border:1px solid #555;
-    border-radius:6px; padding:4px 8px; font-size:12px; display:none; z-index:10; max-width:220px; }
+
+  /* Top bar: slim, always visible, not intrusive */
+  #topbar { position:fixed; top:0; left:0; right:0; z-index:20;
+    padding: calc(8px + env(safe-area-inset-top,0px)) 10px 8px 10px;
+    display:flex; align-items:center; gap:8px; justify-content:space-between;
+    background:linear-gradient(to bottom, rgba(10,10,10,0.85), rgba(10,10,10,0)); pointer-events:none; }
+  #topbar .title { color:#fff; font-size:13px; font-weight:600; pointer-events:none; max-width:62%; line-height:1.25; }
+  #topbar .btns { display:flex; gap:6px; pointer-events:all; }
+  .pill { background:var(--panel); color:var(--text); border:1px solid #555; border-radius:14px;
+    padding:5px 11px; font-size:12px; cursor:pointer; white-space:nowrap; }
+  .pill:active { background:#333; }
+
+  /* Legend: toggled, off by default */
+  #legendPanel { position:fixed; top:calc(46px + env(safe-area-inset-top,0px)); left:10px; right:10px; z-index:19;
+    background:var(--panel); border:1px solid #444; border-radius:10px; padding:10px 12px; font-size:12px;
+    line-height:1.5; color:var(--text); max-height:55vh; overflow-y:auto; display:none; }
+  #legendPanel .row { display:flex; align-items:center; gap:6px; margin:3px 0; }
+  #legendPanel .swatch { width:22px; height:0; flex-shrink:0; }
+  #legendPanel .note { margin-top:6px; color:#999; font-style:italic; }
+
+  /* Detail sheet: bottom-anchored, appears on node/relationship tap */
+  #detailSheet { position:fixed; left:0; right:0; bottom:0; z-index:21;
+    background:var(--panel); border-top:1px solid #444; border-radius:14px 14px 0 0;
+    padding:12px 14px calc(12px + env(safe-area-inset-bottom,0px)) 14px; color:var(--text);
+    max-height:40vh; overflow-y:auto; display:none; box-shadow:0 -4px 20px rgba(0,0,0,0.5); }
+  #detailSheet .head { display:flex; justify-content:space-between; align-items:flex-start; gap:10px; margin-bottom:6px; }
+  #detailSheet .title { font-size:14px; font-weight:600; color:#fff; }
+  #detailSheet .body { font-size:13px; line-height:1.5; color:#ccc; }
+  .closeBtn { background:none; border:none; color:#aaa; font-size:18px; line-height:1; cursor:pointer; padding:0 2px; }
+
+  /* Help overlay */
+  #helpOverlay { position:fixed; inset:0; z-index:30; background:rgba(0,0,0,0.6); display:none; }
+  #helpPanel { position:absolute; top:8%; left:5%; right:5%; bottom:8%; background:#181818; border:1px solid #444;
+    border-radius:14px; padding:16px 18px; overflow-y:auto; color:var(--text); }
+  #helpPanel h2 { color:#fff; font-size:16px; margin:0 0 10px 0; }
+  #helpPanel h3 { color:#fff; font-size:13px; margin:14px 0 4px 0; }
+  #helpPanel p, #helpPanel li { font-size:12.5px; line-height:1.55; color:#ccc; }
+  #helpPanel ul { margin:4px 0; padding-left:18px; }
+  #helpPanel .swatchline { display:flex; align-items:center; gap:8px; margin:4px 0; }
+  #helpPanel .swatch { width:24px; height:0; flex-shrink:0; }
+  #helpPanel .dot { width:12px; height:12px; border-radius:50%; flex-shrink:0; }
 </style>
 </head>
 <body>
-<div id="hud">
-  <div style="font-size:14px; font-weight:600; margin-bottom:6px; color:#fff;">Stranded Capital – couplings across sectors, geographies, and drivers</div>
-  <div style="margin-bottom:6px;">Drag nodes • Pinch/scroll to zoom • Tap a node to highlight its links</div>
-  <div id="legend"></div>
+
+<div id="topbar">
+  <div class="title">Stranded Capital – couplings across sectors, geographies, and drivers</div>
+  <div class="btns">
+    <button class="pill" id="legendToggle">Legend</button>
+    <button class="pill" id="helpToggle">? Help</button>
+  </div>
 </div>
-<div id="tooltip"></div>
+
+<div id="legendPanel"></div>
+
+<div id="detailSheet">
+  <div class="head"><span class="title" id="detailTitle"></span><button class="closeBtn" id="detailClose">✕</button></div>
+  <div class="body" id="detailBody"></div>
+</div>
+
+<div id="helpOverlay">
+  <div id="helpPanel">
+    <div class="head" style="display:flex;justify-content:space-between;align-items:center;">
+      <h2>How to use this graph</h2>
+      <button class="closeBtn" id="helpClose" style="font-size:22px;">✕</button>
+    </div>
+
+    <h3>Navigation</h3>
+    <ul>
+      <li><b>Pinch or scroll</b> to zoom in/out.</li>
+      <li><b>Drag the background</b> to pan around.</li>
+      <li><b>Drag a node</b> to reposition it — the layout will settle again around your change.</li>
+    </ul>
+
+    <h3>Tapping things</h3>
+    <ul>
+      <li><b>Tap a node</b> — highlights its direct connections and opens a detail panel at the bottom with what the node is and how many connections it has.</li>
+      <li><b>Tap a relationship (line)</b> — highlights its two endpoints and opens a detail panel explaining the mechanism: whether it's <b>causal</b> (one-way) or <b>symbiotic</b> (two-way), plus a plain-language description of how the coupling works. Lines have an invisible wider tap zone so they're easier to hit than they look.</li>
+      <li><b>Tap empty background</b> — clears any highlight and closes the detail panel.</li>
+    </ul>
+
+    <h3>Node color coding</h3>
+    <div class="swatchline"><div class="dot" style="background:#ff8c00;"></div>Sector (Energy, Transport, Industry, Buildings, Agriculture, Finance)</div>
+    <div class="swatchline"><div class="dot" style="background:#4ecdc4;"></div>Region, within a sector</div>
+    <div class="swatchline"><div class="dot" style="background:#888;"></div>Capital type (Produced, Human, Natural, Financial, Institutional)</div>
+    <div class="swatchline"><div class="dot" style="border:2px dashed #aaa;background:none;"></div>Candidate bridge node — <i>named</i> hypothesis (top 3 strongest couplings)</div>
+    <div class="swatchline"><div class="dot" style="border:2px dashed #ff3b3b;background:none;"></div>Candidate bridge node — <i>unlabeled</i>, implied but not yet nameable (pulses)</div>
+    <div class="swatchline"><div class="dot" style="background:#2a0e33;border:2px solid #e066ff;"></div>Latent driver — a named common cause (e.g. climate change, sustainability PR, tech revolution) feeding several sectors at once</div>
+    <div class="swatchline"><div class="dot" style="border:2px dashed #66d9ff;background:none;"></div>Latent cluster ("L?") — an unnamed grouping found mathematically via modularity optimization on the coupling network, not assumed</div>
+
+    <h3>Relationship color coding</h3>
+    <div class="swatchline"><span class="swatch" style="border-top:3px solid #ffe66d;"></span>Physical — sector → region risk pathway</div>
+    <div class="swatchline"><span class="swatch" style="border-top:3px solid #c77dff;"></span>Litigation — sector → region risk pathway</div>
+    <div class="swatchline"><span class="swatch" style="border-top:1.5px dashed #1a8fe3;"></span>Market — region → capital type, weak/derived driver</div>
+    <div class="swatchline"><span class="swatch" style="border-top:2px dotted #f2f2f2;"></span>Interconnect — sector ↔ sector coupling; line width scales with coupling strength</div>
+    <div class="swatchline"><span class="swatch" style="border-top:1.5px dashed #e066ff;"></span>Latent driver → the sectors it feeds</div>
+    <div class="swatchline"><span class="swatch" style="border-top:1.5px dashed #66d9ff;"></span>Latent cluster → its member sectors</div>
+
+    <h3>Solid vs. dashed/dotted lines</h3>
+    <p><b>Solid</b> = established, direct causal drivers within the hierarchy (Physical, Litigation). <b>Dashed/dotted</b> = weaker, derived, structural, or latent relationships (Market, sector interconnections, latent drivers, latent clusters) — the dash pattern itself is a signal that the relationship is less direct than a solid line.</p>
+
+    <h3>Arrowheads</h3>
+    <p><b>Single arrowhead</b> = causal, one-way relationship. <b>Double arrowhead</b> (both ends) = symbiotic, two-way relationship — currently used only on Finance edges, since capital flows out as investment and risk/return flows back.</p>
+
+    <h3>Other visual cues</h3>
+    <ul>
+      <li><b>Line thickness</b> on interconnect edges is proportional to coupling strength — thicker means more tightly coupled.</li>
+      <li><b>Pulsing red "?"</b> nodes flag a mathematically implied relationship that doesn't have a name yet — a prompt to investigate, not a finished finding.</li>
+      <li><b>Clustering position</b> is dynamic: sectors with stronger coupling are pulled physically closer together by the simulation, so proximity on screen is itself a signal.</li>
+      <li><b>Dimmed elements</b> after a tap are everything <i>not</i> connected to what you selected — a quick way to trace one node or relationship's footprint through the whole graph.</li>
+    </ul>
+  </div>
+</div>
+
 <svg></svg>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
@@ -47,8 +148,6 @@ const regions = ["EU","US","China","India","Africa","LatAm"];
 const capitalTypes = ["Produced","Human","Natural","Financial","Institutional"];
 
 const driverInfo = {
-  "Policy":       { color:"#ff6b6b", width:5,   dash:null,  label:"Policy (strong)" },
-  "Tech":         { color:"#4ecdc4", width:5,   dash:null,  label:"Technology (strong)" },
   "Physical":     { color:"#ffe66d", width:3,   dash:null,  label:"Physical (secondary)" },
   "Litigation":   { color:"#c77dff", width:3,   dash:null,  label:"Litigation (secondary)" },
   "Market":       { color:"#1a8fe3", width:1.5, dash:"4,3", label:"Market (derived, weak)" },
@@ -126,10 +225,8 @@ sectorCoupling.filter(([,,s])=>s>=CANDIDATE_THRESHOLD).forEach(([a,b,s])=>{
 });
 
 // --- Named latent drivers ---
-// These are common causes sitting BEHIND several edges/driver-types at once
-// (climate change feeds Physical + Litigation + Policy; PR feeds Market +
-// Policy; tech revolutions produce correlated bursts of Tech edges). They
-// are drawn as their own bipartite layer fanning into the sectors they
+// These are common causes sitting BEHIND several edges/driver-types at once.
+// They are drawn as their own bipartite layer fanning into the sectors they
 // causally touch, rather than folded into the per-edge driver coloring.
 const latentDrivers = [
   { id:"Observed Climate Change", targets:["Energy","Agriculture","Buildings","Transport"] },
@@ -145,9 +242,6 @@ latentDrivers.forEach(ld=>{
 // --- Unnamed latent clusters, found mathematically ---
 // Modularity-maximizing partition of the sector-coupling network (brute
 // force over all set partitions — only 6 sectors, so exhaustive is cheap).
-// Any community the algorithm finds with 2+ members is a mathematically
-// implied grouping, independent of your Energy/Transport/etc labels — it
-// gets a node even though nothing has named what binds that group yet.
 function setPartitions(arr){
   if(arr.length===0) return [[]];
   const [first,...rest] = arr;
@@ -179,7 +273,7 @@ function modularity(partition){
   return Q;
 }
 const bestPartition = setPartitions(sectors)
-  .filter(p=> p.length>=2 && p.length<=sectors.length-1) // exclude the trivial "one giant cluster" and "all singletons"
+  .filter(p=> p.length>=2 && p.length<=sectors.length-1) // exclude trivial "one giant cluster" / "all singletons"
   .reduce((best,p)=>{
     const q = modularity(p);
     return (!best || q>best.q) ? { p, q } : best;
@@ -200,8 +294,8 @@ function linkColor(d){
   if(d.driver==="LatentCluster") return "#66d9ff";
   return driverInfo[d.driver].color;
 }
-const markerName = { "#ff6b6b":"red","#4ecdc4":"teal","#ffe66d":"yellow","#c77dff":"purple",
-  "#1a8fe3":"blue","#f2f2f2":"white","#e066ff":"magenta","#66d9ff":"cyan" };
+const markerName = { "#ffe66d":"yellow","#c77dff":"purple","#1a8fe3":"blue","#f2f2f2":"white",
+  "#e066ff":"magenta","#66d9ff":"cyan" };
 const defs = svg.append("defs");
 Object.entries(markerName).forEach(([color,name])=>{
   defs.append("marker")
@@ -224,25 +318,49 @@ const link = g.selectAll("line").data(links).enter().append("line")
   .attr("marker-end", d=> markerUrl(d))
   .attr("marker-start", d=> d.direction==="<->" ? markerUrl(d) : null);
 
-// Explains how a relationship works — causal (one-way) vs symbiotic (two-way) — for click/tap.
+// Explains how a relationship works — causal (one-way) vs symbiotic (two-way) — for tap.
 function getExplanation(d){
   const s = d.source.id || d.source, t = d.target.id || d.target;
   if(d.driver==="Interconnect" && d.mechanism){
     const cls = d.direction==="<->" ? "Symbiotic (two-way)" : "Causal (one-way)";
-    return `${s} \u2194 ${t} \u2014 ${cls}. ${d.mechanism}`;
+    return { title:`${s} ${d.direction==="<->"?"\u2194":"\u2192"} ${t}`, body:`${cls}. ${d.mechanism}` };
   }
   if(d.driver==="Interconnect")
-    return `${s} \u2192 ${t} \u2014 Structural. Contributes to an implied cross-sector relationship not yet named in the taxonomy.`;
+    return { title:`${s} \u2192 ${t}`, body:"Structural. Contributes to an implied cross-sector relationship not yet named in the taxonomy." };
   if(d.driver==="LatentDriver")
-    return `${s} \u2192 ${t} \u2014 Causal (latent). A common cause acting on this sector alongside others it also feeds.`;
+    return { title:`${s} \u2192 ${t}`, body:"Causal (latent). A common cause acting on this sector alongside others it also feeds." };
   if(d.driver==="LatentCluster")
-    return `${s} \u2192 ${t} \u2014 Structural (latent). Falls inside a modularity-derived latent grouping; no causal direction implied, just structural cohesion found mathematically.`;
+    return { title:`${s} \u2192 ${t}`, body:"Structural (latent). Falls inside a modularity-derived latent grouping; no causal direction implied, just structural cohesion found mathematically." };
   if(d.driver==="Physical" || d.driver==="Litigation")
-    return `${s} \u2192 ${t} \u2014 Causal. ${d.driver} risk pathway propagating from the sector into this region's exposure.`;
+    return { title:`${s} \u2192 ${t}`, body:`Causal. ${d.driver} risk pathway propagating from the sector into this region's exposure.` };
   if(d.driver==="Market")
-    return `${s} \u2192 ${t} \u2014 Causal (derived). Market repricing transmits risk into this capital layer \u2014 a weak, secondary driver, not a primary cause.`;
-  return `${s} \u2192 ${t}`;
+    return { title:`${s} \u2192 ${t}`, body:"Causal (derived). Market repricing transmits risk into this capital layer — a weak, secondary driver, not a primary cause." };
+  return { title:`${s} \u2192 ${t}`, body:"" };
 }
+
+// Node tap detail
+function nodeInfo(d){
+  const conns = links.filter(l=>{
+    const s=l.source.id||l.source, t=l.target.id||l.target;
+    return s===d.id||t===d.id;
+  }).length;
+  switch(d.type){
+    case "sector": return { title:d.id, body:`Sector node. ${conns} direct connections (regions, cross-sector couplings, and any latent layers touching it).` };
+    case "region": return { title:`${d.id}`, body:`Region within ${d.sector}. ${conns} direct connections (to its sector, and to its 5 capital types).` };
+    case "capital": return { title:`${d.capital} capital`, body:`${d.sector} \u2192 ${d.region} \u2192 ${d.capital}. ${conns} direct connection(s), via the Market layer.` };
+    case "candidate": return { title: d.named ? d.label.replace(/^\?\s*/,"") : "Unlabeled candidate node", body:`${d.tooltip}  •  ${conns} connection(s).` };
+    case "latentDriver": return { title:d.id, body:`${d.tooltip}  •  ${conns} connection(s).` };
+    case "latentCluster": return { title:"Latent cluster (unnamed)", body:`${d.tooltip}  •  ${conns} connection(s).` };
+    default: return { title:d.id, body:"" };
+  }
+}
+
+function showDetail(title, body){
+  document.getElementById("detailTitle").textContent = title;
+  document.getElementById("detailBody").textContent = body;
+  document.getElementById("detailSheet").style.display = "block";
+}
+function hideDetail(){ document.getElementById("detailSheet").style.display = "none"; }
 
 // Invisible, wide hit-area line laid over each visible link so relationships
 // are actually tappable on mobile (the real lines are 1.5-5px wide).
@@ -254,12 +372,8 @@ const linkHit = g.selectAll("line.link-hit").data(links).enter().append("line")
   .style("cursor","pointer")
   .on("click",(event,d)=>{
     event.stopPropagation();
-    const tt = document.getElementById("tooltip");
-    tt.style.maxWidth = "260px";
-    tt.textContent = getExplanation(d);
-    tt.style.display = "block";
-    tt.style.left = (event.clientX+12)+"px";
-    tt.style.top = (event.clientY+12)+"px";
+    const ex = getExplanation(d);
+    showDetail(ex.title, ex.body);
     highlightLink(d);
   });
 
@@ -290,15 +404,12 @@ const node = g.selectAll("circle").data(nodes).enter().append("circle")
     .on("start",(event,d)=>{ if(!event.active) simulation.alphaTarget(0.3).restart(); d.fx=d.x; d.fy=d.y; })
     .on("drag",(event,d)=>{ d.fx=event.x; d.fy=event.y; })
     .on("end",(event,d)=>{ if(!event.active) simulation.alphaTarget(0); d.fx=null; d.fy=null; }))
-  .on("mouseenter touchstart",(event,d)=>{
-    const tt = document.getElementById("tooltip");
-    tt.style.display = "block";
-    tt.textContent = d.tooltip || (d.type==="candidate" ? d.tooltip : d.id);
-    tt.style.left = (event.clientX+12)+"px";
-    tt.style.top = (event.clientY+12)+"px";
-  })
-  .on("mouseleave", ()=> document.getElementById("tooltip").style.display="none")
-  .on("click",(event,d)=>{ event.stopPropagation(); highlight(d); });
+  .on("click",(event,d)=>{
+    event.stopPropagation();
+    highlight(d);
+    const info = nodeInfo(d);
+    showDetail(info.title, info.body);
+  });
 
 const label = g.selectAll("text").data(nodes).enter().append("text")
   .attr("class", d=>{
@@ -316,31 +427,53 @@ const label = g.selectAll("text").data(nodes).enter().append("text")
 
 svg.on("click", ()=>clearHighlight());
 
-const legend = document.getElementById("legend");
-const note0=document.createElement("div");
-note0.style.cssText="margin-bottom:4px;";
-note0.textContent="Arrows show causal direction. Double-headed = Finance edges only (capital flows both ways); everything else is single-direction.";
-legend.appendChild(note0);
+// --- Legend (toggled, closed by default) ---
+const legendPanel = document.getElementById("legendPanel");
+function addLegendRow(html){ const div=document.createElement("div"); div.innerHTML=html; div.className="row"; legendPanel.appendChild(div); }
+addLegendRow(`<span>Arrows show causal direction. Double-headed = Finance edges only (capital flows both ways); everything else is single-direction.</span>`);
 Object.entries(driverInfo).forEach(([name,info])=>{
-  const row=document.createElement("div");
-  row.style.cssText="display:flex;align-items:center;gap:6px;margin:2px 0;";
-  const sw=document.createElement("span");
-  sw.style.cssText=`width:22px;height:0px;border-top:${info.width}px ${info.dash?"dashed":"solid"} ${info.color};`;
+  const row=document.createElement("div"); row.className="row";
+  const sw=document.createElement("span"); sw.className="swatch";
+  sw.style.borderTop=`${info.width}px ${info.dash?"dashed":"solid"} ${info.color}`;
   const t=document.createElement("span"); t.textContent=info.label;
-  row.appendChild(sw); row.appendChild(t); legend.appendChild(row);
+  row.appendChild(sw); row.appendChild(t); legendPanel.appendChild(row);
 });
-const note=document.createElement("div");
-note.style.cssText="margin-top:4px;font-style:italic;color:#999;";
-note.textContent="Dashed circles = candidate bridge nodes. Named = strongest 3 couplings; red pulsing \"?\" = implied but not yet nameable (hover for coupling strength)";
-legend.appendChild(note);
-const note2=document.createElement("div");
-note2.style.cssText="margin-top:4px;color:#e066ff;";
-note2.textContent="Magenta = named latent drivers (climate change, sustainability PR, tech revolution) feeding several sectors at once";
-legend.appendChild(note2);
-const note3=document.createElement("div");
-note3.style.cssText="margin-top:2px;color:#66d9ff;";
-note3.textContent='Cyan "L?" = unnamed latent cluster from modularity optimization on the coupling network — a mathematically implied grouping, no name assigned yet';
-legend.appendChild(note3);
+const legendNote1=document.createElement("div"); legendNote1.className="note";
+legendNote1.textContent="Dashed circles = candidate bridge nodes. Named = strongest 3 couplings; red pulsing \"?\" = implied but not yet nameable.";
+legendPanel.appendChild(legendNote1);
+const legendNote2=document.createElement("div"); legendNote2.className="note"; legendNote2.style.color="#e066ff";
+legendNote2.textContent="Magenta = named latent drivers (climate change, sustainability PR, tech revolution) feeding several sectors at once.";
+legendPanel.appendChild(legendNote2);
+const legendNote3=document.createElement("div"); legendNote3.className="note"; legendNote3.style.color="#66d9ff";
+legendNote3.textContent='Cyan "L?" = unnamed latent cluster from modularity optimization — a mathematically implied grouping, no name assigned yet.';
+legendPanel.appendChild(legendNote3);
+const legendNote4=document.createElement("div"); legendNote4.className="note";
+legendNote4.textContent='Tap "? Help" for the full guide to every interaction and color code.';
+legendPanel.appendChild(legendNote4);
+
+// --- Toggle buttons ---
+document.getElementById("legendToggle").addEventListener("click", (e)=>{
+  e.stopPropagation();
+  const open = legendPanel.style.display === "block";
+  legendPanel.style.display = open ? "none" : "block";
+});
+document.getElementById("helpToggle").addEventListener("click", (e)=>{
+  e.stopPropagation();
+  document.getElementById("helpOverlay").style.display = "block";
+});
+document.getElementById("helpClose").addEventListener("click", (e)=>{
+  e.stopPropagation();
+  document.getElementById("helpOverlay").style.display = "none";
+});
+document.getElementById("helpOverlay").addEventListener("click", ()=>{
+  document.getElementById("helpOverlay").style.display = "none";
+});
+document.getElementById("helpPanel").addEventListener("click", (e)=> e.stopPropagation());
+document.getElementById("detailClose").addEventListener("click", (e)=>{
+  e.stopPropagation();
+  hideDetail();
+});
+document.getElementById("detailSheet").addEventListener("click", (e)=> e.stopPropagation());
 
 function neighborsOf(d){
   const ids=new Set([d.id]);
@@ -359,7 +492,7 @@ function highlight(d){
 }
 function clearHighlight(){
   node.classed("dim",false); link.classed("dim",false); label.classed("dim",false);
-  document.getElementById("tooltip").style.display = "none";
+  hideDetail();
 }
 
 const sectorMap = new Map();
